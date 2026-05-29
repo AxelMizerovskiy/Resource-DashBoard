@@ -10,17 +10,17 @@ If you are on Linux, you don't need to install the Rust toolchain. You can just 
 1. Download the latest `rdb` binary from the Releases tab.
 2. Open your terminal in the folder where you downloaded it.
 3. Make the file executable and move it to `/usr/local/bin` so your system recognizes the command globally:
-
+```
    chmod +x rdb
    sudo mv rdb /usr/local/bin/
-
+```
 **Building from source**
 If you already have Rust installed, you can clone the repository and compile it yourself:
-
-   git clone <your-repo-link-here>
+```
+   git clone https://github.com/AxelMizerovskiy/Resource-DashBoard
    cd rdb
    cargo install --path .
-
+```
 ## Usage
 
 After installation, you can use it by typing:
