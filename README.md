@@ -30,4 +30,4 @@ After installation, you can use it by typing:
 - `q` to close
 
 ## Future Updates
-Future updates will give the user the option to only show specific metrics instead of the entire dashboard.
+Future updates will give the user the option to only show specific metrics instead of the entire dashboard through arguments passed in.
