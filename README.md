@@ -27,6 +27,7 @@ After installation, you can use it by typing:
 
 - `rdb` for the default call
 - `rdb --timeout 5` or `rdb -t 5` for a specific timeout period (in seconds)
+- `q` to close
 
 ## Future Updates
 Future updates will give the user the option to only show specific metrics instead of the entire dashboard.
