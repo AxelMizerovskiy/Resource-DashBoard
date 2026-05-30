@@ -18,7 +18,7 @@ If you are on Linux, you don't need to install the Rust toolchain. You can just 
 If you already have Rust installed, you can clone the repository and compile it yourself:
 ```
    git clone https://github.com/AxelMizerovskiy/Resource-DashBoard
-   cd rdb
+   cd Resource-DashBoard
    cargo install --path .
 ```
 ## Usage
