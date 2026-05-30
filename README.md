@@ -1,6 +1,6 @@
 # rdb
 
-rdb is a CLI resource monitor. It adapts to your terminal size, but it should be at least 29 lines in length so the interface renders properly.
+rdb is a CLI resource monitor. It adapts to your terminal size, but the terminal should be at least 29 lines in length so rdb renders fully.
 
 ## Installation
 
