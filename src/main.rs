@@ -1,13 +1,19 @@
-use sysinfo::{System, Disks, Networks};
+use sysinfo::{System, Disks, Networks, Components};
 use std::{io, time::{Duration, Instant}};
-use clap::Parser;
+use clap::{Parser};
 use crossterm::{
     event::{self, Event, KeyCode},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
-    Terminal, backend::CrosstermBackend, layout::{Constraint, Direction, Layout}, style::{Color, Style}, symbols, widgets::{Axis, Block, Borders, Chart, Dataset, Gauge, GraphType, Paragraph}
+    Terminal, 
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout}, 
+    style::{Color, Style, Stylize}, 
+    symbols, 
+    text::Line,
+    widgets::{Axis, Block, Borders, Cell, Chart, Dataset, Gauge, GraphType, List, ListItem, Paragraph, Row, Table}
 };
 
 
@@ -37,6 +43,7 @@ fn main() -> Result<(), io::Error>{
     let mut sys = System::new_all();
     let mut last_tick = Instant::now();
     let tick_rate = Duration::from_secs(args.timeout);
+    let mut first = true; // check for first run
 
     // setup history chart
     let mut cpu_history: Vec<f64> = vec![];
@@ -53,14 +60,26 @@ fn main() -> Result<(), io::Error>{
     let mut rx_bytes: u64 = 0;
     let mut tx_bytes: u64 = 0;
 
-    //disk state stats
+    // disk state stats
     let mut disks = Disks::new_with_refreshed_list();
     let mut disk_state: Vec<(String, u64, u64)> = vec![];
+
+    // process state stats
+    let mut processes : Vec<_>;
+    let mut rows: Vec<_> = vec![];
+
+    // thermals state stats
+    let mut components = Components::new_with_refreshed_list();
+    let mut cpu_temp_avg: f32 = 0.0;
+    let mut gpu_temp: f32 = 0.0;
+    let mut sys_temp: f32 = 0.0;
 
     // main monitoring loop
     loop {
         // Refresh sys info for latest stats after timeout only
-        if last_tick.elapsed() >= tick_rate {
+        if (last_tick.elapsed() >= tick_rate) || first {
+            if first {first = false;}
+
             sys.refresh_all(); // could refresh cpu and mem instead 
 
             // update state variables
@@ -104,9 +123,53 @@ fn main() -> Result<(), io::Error>{
             }
 
             disk_state.truncate(2);
+
+            // processes update
+           processes = sys.processes().values().collect();
+           processes.sort_by(|a, b| {
+               b.cpu_usage()
+                   .partial_cmp(&a.cpu_usage())
+                   .unwrap_or(std::cmp::Ordering::Equal)
+           });
+           rows.clear(); // since grabbing all new processes
+           for proc in processes.iter().take(5){
+               let pid = proc.pid();
+               let name = proc.name().to_string();
+               let cpu = proc.cpu_usage();
+               let ram_mb = proc.memory() / 1024 / 1024;
+
+               let row = Row::new(vec![
+                   Cell::from(format!("{pid}")),
+                   Cell::from(name),
+                   Cell::from(format!("{cpu:.1}%")),
+                   Cell::from(format!("{ram_mb} MB")),
+               ]).height(1);
+               rows.push(row);
+           }
+
+           // thermals updater
+           components.refresh();
+           cpu_temp_avg = 0.0;
+           gpu_temp = 0.0;
+           sys_temp = 0.0;
+           let mut cpu_temps = vec![];
+
+           for component in components.list(){
+               let label = component.label().to_lowercase();
+               let temp = component.temperature();
+               if label.contains("core") || label.contains("cpu") || label.contains("tctl") || label.contains("k10") {
+                   cpu_temps.push(temp);
+               } else if label.contains("amd") || label.contains("nvidia") || label.contains("edge") || label.contains("gpu") {
+                   gpu_temp = temp;
+               } else if label.contains("acpi") || label.contains("sys") || label.contains("mb") {
+                   sys_temp = temp;
+               }
+           }
+           if !cpu_temps.is_empty(){
+               cpu_temp_avg = cpu_temps.iter().sum::<f32>() / cpu_temps.len() as f32;
+           }
         }
         
-
         // draw UI
         terminal.draw(|f| {
             // split terminal in half
@@ -117,6 +180,7 @@ fn main() -> Result<(), io::Error>{
                     Constraint::Length(3), // Summary
                     Constraint::Length(12), // graph
                     Constraint::Length(6), // disk and network
+                    Constraint::Length(8), // Processes and Temps
                     Constraint::Min(0), // for OPNsense Logs later
                 ])
                 .split(f.size());
@@ -126,13 +190,20 @@ fn main() -> Result<(), io::Error>{
                     Constraint::Percentage(40), // network left side
                     Constraint::Percentage(60), // disks right side
                 ]).split(chunks[2]);
+
+            let divided_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(75), // processes
+                    Constraint::Percentage(25), // temps
+                ]).split(chunks[3]);
            
             // Summary widget
             let summary_text = format!(" CPU: {:.1}%   |   RAM: {} MB / {} MB", current_cpu, used_memory, total_memory);
             let summary_widget = Paragraph::new(summary_text).block(
                 Block::default()
-                    .title(" Status Summary ")
-                    .borders(Borders::ALL),
+                    .title(Line::from(" Status Summary ").style(Style::default().fg(Color::Green)))
+                    .borders(Borders::ALL)
             );
             f.render_widget(summary_widget, chunks[0]);
 
@@ -147,7 +218,10 @@ fn main() -> Result<(), io::Error>{
 
             // Graph widget
             let cpu_graph = Chart::new(datasets)
-                .block(Block::default().title(" CPU Usage History ").borders(Borders::ALL))
+                .block(Block::default()
+                    .title(Line::from(" CPU Usage History ").style(Style::default().fg(Color::Yellow)))
+                    .borders(Borders::ALL)
+                )
                 .x_axis(
                     Axis::default()
                         .title(" Time ")
@@ -170,7 +244,10 @@ fn main() -> Result<(), io::Error>{
             
             let net_text = format!("\n Download (Rx): {rx_kbs:.1} KB/s\n Upload (Tx): {tx_kbs:.1} KB/s");
             let net_widget = Paragraph::new(net_text)
-                .block(Block::default().title(" Network I/O ").borders(Borders::ALL));
+                .block(Block::default()
+                    .title(Line::from(" Network I/O ").style(Style::default().fg(Color::LightBlue)))
+                    .borders(Borders::ALL)
+                );
             f.render_widget(net_widget, split_chunks[0]);
 
             // Disk gauges
@@ -188,14 +265,49 @@ fn main() -> Result<(), io::Error>{
                 let label = format!("{used_gb:.1} GB / {total_gb:.1} GB");
 
                 let gauge = Gauge::default()
-                    .block(Block::default().title(format!(" Disk: {mount} ")).borders(Borders::ALL))
+                    .block(Block::default().title(Line::from(format!(" Disk: {mount} ")).style(Style::default().fg(Color::LightCyan))).borders(Borders::ALL))
                     .gauge_style(Style::default().fg(Color::Cyan))
                     .percent(percent.clamp(0, 100))
                     .label(label);
                 f.render_widget(gauge, disk_chunks[i]);
             } 
             
-            // chunks[3] is empty for now
+            // processes Table
+            let widths = [
+                Constraint::Percentage(15),
+                Constraint::Percentage(35),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ];
+            let table = Table::new(rows.clone(), widths)
+                .column_spacing(1)
+                .header(
+                    Row::new(vec!["PID", "Name", "CPU", "RAM"])
+                        .style(Style::new().bold())
+                )
+                .block(Block::default()
+                    .title(Line::from(" Top 5 Processes ").style(Style::default().fg(Color::LightRed)))
+                    .borders(Borders::ALL)
+                );
+            f.render_widget(table, divided_chunks[0]);
+            
+            // thermals widgets
+            let mut temp_items = vec![];
+
+            if cpu_temp_avg > 0.0 { temp_items.push(ListItem::new(format!(" CPU Avg:    {cpu_temp_avg:.0}°C"))); }
+            if gpu_temp > 0.0 { temp_items.push(ListItem::new(format!(" GPU:    {gpu_temp:.0}°C"))); }
+            if sys_temp > 0.0 { temp_items.push(ListItem::new(format!(" System: {sys_temp:.0}°C"))); }
+
+            let temp_list = List::new(temp_items)
+                .block(
+                    Block::default()
+                        .title(Line::from(" Temps ").style(Style::default().fg(Color::Red)))
+                        .borders(Borders::ALL)
+                );
+            f.render_widget(temp_list, divided_chunks[1]);
+
+
+            // chunks[4] is empty for now
             
         })?; // default error
         // polls for keypress
