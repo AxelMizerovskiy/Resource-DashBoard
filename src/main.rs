@@ -181,6 +181,7 @@ fn main() -> Result<(), io::Error>{
                     Constraint::Length(12), // graph
                     Constraint::Length(6), // disk and network
                     Constraint::Length(8), // Processes and Temps
+                    Constraint::Length(1), // Uptime bar
                     Constraint::Min(0), // for OPNsense Logs later
                 ])
                 .split(f.size());
@@ -305,9 +306,19 @@ fn main() -> Result<(), io::Error>{
                         .borders(Borders::ALL)
                 );
             f.render_widget(temp_list, divided_chunks[1]);
+            
+            // uptime widget
+            let uptime_sec = System::uptime();
+            let days = uptime_sec / 86400;
+            let hours = (uptime_sec % 86400) / 3600;
+            let minute = (uptime_sec % 3600) / 60;
 
+            let uptime_text = format!(" System Uptime: {days} days, {hours} hours, {minute} minutes");
+            let uptime_widget = Paragraph::new(uptime_text)
+                .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(uptime_widget, chunks[4]);
 
-            // chunks[4] is empty for now
+            // chunks[5] is empty for now
             
         })?; // default error
         // polls for keypress
